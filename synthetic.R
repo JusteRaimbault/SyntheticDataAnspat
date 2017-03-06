@@ -11,6 +11,7 @@ setwd(paste0(Sys.getenv('MONITORAT'),'/L2AnalyseSpatiale/DM/SyntheticData'))
 library(readODS)
 library(dplyr)
 library(ggplot2)
+library(igraph)
 
 ##
 # Estimation procedure
@@ -54,9 +55,22 @@ synth$DEPRES = sapply(synth$Domcode,function(s){substr(s,1,2)})
 ## 2) Transportation times
 
 # -> use TC network
+source('network.R')
+
+# RER
+trgraph=addTransportationLayer('data/gis/gares.shp','data/gis/rer_lignes.shp')
+# Transilien
+trgraph=addTransportationLayer('data/gis/empty.shp','data/gis/train_banlieue_lignes.shp',g = trgraph)
+# Metro
+trgraph=addTransportationLayer('data/gis/metro_stations.shp','data/gis/test_metro.shp',g = trgraph)
+# Tram
+trgraph=addTransportationLayer('data/gis/TCSP_arrets.shp','data/gis/TCSP_lignes.shp',g = trgraph)
+
+
+
 
 # random for now
-synth$TpsP7 = sample(x=c(data2016$TpsUniv_min,d$TpsP7),size=NEtus,replace=TRUE)
+#synth$TpsP7 = sample(x=c(data2016$TpsUniv_min,d$TpsP7),size=NEtus,replace=TRUE)
 
 ###
 ## 3) Average and max time estimations
@@ -105,19 +119,24 @@ Fish <- mlogit.data(Fishing, varying = c(2:9), shape = "wide", choice = "mode")
 
 # test with raw modes
 cdata = data.frame(mode=c(data2016$ModeTransp,d$ModalChoice),famille = c(data2016$Famille,d$Famille),tpsmin=c(data2016$TpsUniv_min,d$TpsP7),tpsmax=c(data2016$TpsUniv_max,d$MaxTps))
-modes = unique(as.character(cdata$mode))
-choice = data.frame();rnames = c()
-for(i in 1:nrow(cdata)){
-  for(cmode in modes){
-    choice = rbind(choice,data.frame(mode=(cmode==cdata[i,1]),alt=cmode,tpsmin=cdata[i,3],tpsmax=cdata[i,4],chid=i))#,famille=cdata[i,2]))
-    rnames = append(rnames,paste0(i,'.',cmode))
-  }
-}
-rownames(choice)<-rnames
 
-#choice <-  mlogit.data(cdata, shape="wide",choice="mode")
+#modes = unique(as.character(cdata$mode))
+#choice = data.frame();rnames = c()
+#for(i in 1:nrow(cdata)){
+#  for(cmode in modes){
+#    choice = rbind(choice,data.frame(mode=(cmode==cdata[i,1]),alt=cmode,tpsmin=cdata[i,3],tpsmax=cdata[i,4],chid=i))#,famille=cdata[i,2]))
+#    rnames = append(rnames,paste0(i,'.',cmode))
+#  }
+#}
+#rownames(choice)<-rnames
 
-mlogit(mFormula(mode ~ tpsmin + tpsmax), data = choice)
+mtable = table(as.character(cdata$mode))
+
+rows =  cdata$mode%in%names(mtable)[mtable>3]
+cdata$mode <- as.factor(cdata$mode)
+choice <-  mlogit.data(cdata[rows,],shape="wide",choice="mode")
+
+mlogit(mFormula(mode ~ 1 | tpsmin + tpsmax), data = choice)
 
 
 
