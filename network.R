@@ -6,11 +6,59 @@ library(rgdal)
 library(rgeos)
 
 
+
+
+#' 
+#' 
+addAdministrativeLayer<-function(g,admin_layer,connect_speed=1){
+  spath = strsplit(strsplit(admin_layer,'.shp')[[1]][1],'/')[[1]]
+  admin <- readOGR(paste(spath[1:(length(spath)-1)],collapse="/"),spath[length(spath)])
+  centroids = gCentroid(admin,byid = TRUE)
+  return(addPoints(g,centroids@coords,list(CP=as.character(admin$INSEE_COMM)),list(speed=rep(connect_speed,length(admin)))))
+}
+
+#testadmin = addAdministrativeLayer(trgraph,"data/gis/communes.shp")
+
+
+addPointsLayer<-function(g,points_layer,connect_speed=1){
+  spath = strsplit(strsplit(points_layer,'.shp')[[1]][1],'/')[[1]]
+  points <- readOGR(paste(spath[1:(length(spath)-1)],collapse="/"),spath[length(spath)])
+  return(addPoints(g,points@coords,list(pointname=as.character(points$name)),list(speed=rep(connect_speed,length(points)))))
+}
+
+
+#' 
+#' add vertices, connecting to closest stations
+addPoints<-function(g,coords,v_attr_list,e_attr_list){
+  currentvid = max(as.numeric(V(g)$name)) + 1
+  attrs = v_attr_list
+  attrs[["name"]] = as.character(currentvid:(currentvid+nrow(coords)-1))
+  attrs[["station"]] = rep(FALSE,nrow(coords))
+  attrs[["x"]] = coords[,1];attrs[["y"]] = coords[,2]
+  currentg = add_vertices(graph = g,nv=nrow(coords),attr = attrs)
+  etoadd = c();elengths=c()
+  for(k in 1:nrow(coords)){
+    stationscoords = data.frame(id=V(currentg)$name[V(currentg)$station==TRUE],x=V(currentg)$x[V(currentg)$station==TRUE],y=V(currentg)$y[V(currentg)$station==TRUE])
+    stationscoords$id=as.character(stationscoords$id)
+    dists = sqrt((stationscoords$x - coords[k,1])^2 + (stationscoords$y - coords[k,2])^2)
+    closest_station_id = stationscoords$id[which(dists==min(dists))[1]]
+    etoadd = append(etoadd,c(attrs[["name"]][k],closest_station_id))
+    elengths=append(elengths,min(dists))
+  }
+  attrs = e_attr_list
+  attrs[["length"]] = elengths
+  currentg = add_edges(graph=currentg,edges = etoadd,attr = attrs)
+  return(currentg)
+}
+
+#testg = addPoints(trgraph,matrix(c(661796,6881580),nrow=1),list(),list(speed=c(0.5)))
+
+
 #'
 #' 
 addFootLinks<-function(g,walking_speed=1,snap=100){
   distmat = dist(data.frame(x=V(g)$x[V(g)$station==TRUE],y=V(g)$y[V(g)$station==TRUE]))
-
+  # TODO
 
 }
 

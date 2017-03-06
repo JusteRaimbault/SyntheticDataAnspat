@@ -44,41 +44,65 @@ set.seed(1)
 ###
 ## 1) Adresses
 
-depcount = adresses %>% group_by(DEP) %>% summarise(count=n())
+#depcount = adresses %>% group_by(DEP) %>% summarise(count=n())
 
 # random
-synth$Domcode = sample(data2016$Codresid,NEtus)
+#synth$Domcode = sample(data2016$Codresid,NEtus)
+#synth$DEPRES = sapply(synth$Domcode,function(s){substr(s,1,2)})
 
+synth$Domcode = sample(setdiff(adresses$CODCOM,d$Domcode),size=NEtus,replace = FALSE)
 synth$DEPRES = sapply(synth$Domcode,function(s){substr(s,1,2)})
 
 ###
 ## 2) Transportation times
 
+# random
+#synth$TpsP7 = sample(x=c(data2016$TpsUniv_min,d$TpsP7),size=NEtus,replace=TRUE)
+
 # -> use TC network
 source('network.R')
 
+# construct network
+# speeds : RER 60km.h-1 -> 0.001 min.m-1 ; Transilien 100kmh ; Metro 30kmh ; Tram 20kmh
+# communes : car, 50kmh ; fac : pied 5kmh
 # RER
-trgraph=addTransportationLayer('data/gis/gares.shp','data/gis/rer_lignes.shp')
+trgraph=addTransportationLayer('data/gis/gares.shp','data/gis/rer_lignes.shp',speed=0.001)
 # Transilien
-trgraph=addTransportationLayer('data/gis/empty.shp','data/gis/train_banlieue_lignes.shp',g = trgraph)
+trgraph=addTransportationLayer('data/gis/empty.shp','data/gis/train_banlieue_lignes.shp',g = trgraph,speed=6e-04)
 # Metro
-trgraph=addTransportationLayer('data/gis/metro_stations.shp','data/gis/test_metro.shp',g = trgraph)
+trgraph=addTransportationLayer('data/gis/metro_stations.shp','data/gis/test_metro.shp',g = trgraph,speed=0.002)
 # Tram
-trgraph=addTransportationLayer('data/gis/TCSP_arrets.shp','data/gis/TCSP_lignes.shp',g = trgraph)
+trgraph=addTransportationLayer('data/gis/TCSP_arrets.shp','data/gis/TCSP_lignes.shp',g = trgraph,speed=0.003)
 
+# add communes
+comgraph = addAdministrativeLayer(trgraph,"data/gis/communes.shp",connect_speed = 0.0012)
 
+# add destination facs
+fullgraph = addPointsLayer(comgraph,'data/gis/facs.shp',connect_speed = 0.012)
 
+# compute times
+fromids = c();for(cp in synth$Domcode){if(length(which(V(fullgraph)$CP==cp))>0){show(cp)};fromids=append(fromids,which(V(fullgraph)$CP==cp))}
+toids = c();for(fac in c("P1","P7","P4","P8","P10","P12","UPEM")){toids = append(toids,which(V(fullgraph)$pointname==fac))}
+factimes = distances(graph = fullgraph,v = fromids,to = toids,weights = E(fullgraph)$speed*E(fullgraph)$length)
 
-# random for now
-#synth$TpsP7 = sample(x=c(data2016$TpsUniv_min,d$TpsP7),size=NEtus,replace=TRUE)
+factimes = round(factimes)
+
+#min(d[,7:13])
+# -> a bit underestimated, add 10 minutes
+factimes = factimes + 10
+
+synth=cbind(synth,factimes)
+colnames(synth)[3:9]<-c("P1","P7","P4","P8","P10","P12","UPEM")
+
+synth$TpsP7=synth$P7
 
 ###
 ## 3) Average and max time estimations
 
 times=data.frame(tpsmin=c(data2016$TpsUniv_min,d$TpsP7),tpsmax=c(data2016$TpsUniv_max,d$MaxTps))
 #plot(c(data2016$TpsUniv_min,d$TpsP7),c(data2016$TpsUniv_max,d$MaxTps))
-ggplot(times,aes(x=tpsmin,y=tpsmax))+
-  geom_point()+stat_smooth()
+#ggplot(times,aes(x=tpsmin,y=tpsmax))+
+#  geom_point()+stat_smooth()
 
 # -> a univariate linear should do, with fat tail residuals (sample from model residuals)
 est = lm(tpsmax~tpsmin,times)
@@ -88,8 +112,9 @@ synth$MaxTps = synth$TpsP7 * est$coefficients[2] + sample(x=est$residuals,size=N
 synth$MaxTps = round(synth$MaxTps / 5)*5
 
 # average time available only for 2017, estimation will be ultra poor
-ggplot(data.frame(avgtps=d$AvgTps,tpsmin=d$TpsP7),aes(x=mintps,y=tpsmin))+
-  geom_point()+stat_smooth()
+#ggplot(data.frame(avgtps=d$AvgTps,tpsmin=d$TpsP7),aes(x=mintps,y=tpsmin))+
+#  geom_point()+stat_smooth()
+
 est = lm(avgtps~tpsmin,data.frame(avgtps=d$AvgTps,tpsmin=d$TpsP7))
 # interesting : they actually take less time than the "min" time (ratp times)
 synth$AvgTps = synth$TpsP7 * est$coefficients[2] + sample(x=est$residuals,size=NEtus,replace=TRUE)
@@ -114,8 +139,8 @@ library(mlogit)
 # Q : consider mode succession or alternative ? (could then duplicate rows)
 
 # test the mlogit package
-data("Fishing", package = "mlogit")
-Fish <- mlogit.data(Fishing, varying = c(2:9), shape = "wide", choice = "mode")
+#data("Fishing", package = "mlogit")
+#Fish <- mlogit.data(Fishing, varying = c(2:9), shape = "wide", choice = "mode")
 
 # test with raw modes
 cdata = data.frame(mode=c(data2016$ModeTransp,d$ModalChoice),famille = c(data2016$Famille,d$Famille),tpsmin=c(data2016$TpsUniv_min,d$TpsP7),tpsmax=c(data2016$TpsUniv_max,d$MaxTps))
@@ -136,8 +161,83 @@ rows =  cdata$mode%in%names(mtable)[mtable>3]
 cdata$mode <- as.factor(cdata$mode)
 choice <-  mlogit.data(cdata[rows,],shape="wide",choice="mode")
 
-mlogit(mFormula(mode ~ 1 | tpsmin + tpsmax), data = choice)
+est = mlogit(mFormula(mode ~ 1 | tpsmin + tpsmax), data = choice)
 
+bPiedMetroMin = est$coefficients["A pied (si plus de 10 minutes), Métro / RER:tpsmin"]
+bPiedMetroMax = est$coefficients["A pied (si plus de 10 minutes), Métro / RER:tpsmax"]
+bPiedMetroBusMin=est$coefficients["A pied (si plus de 10 minutes), Métro / RER, Bus:tpsmin"]
+bPiedMetroBusMax=est$coefficients["A pied (si plus de 10 minutes), Métro / RER, Bus:tpsmax"]
+bMetroMin = est$coefficients["Métro / RER:tpsmin"]
+bMetroMax = est$coefficients["Métro / RER:tpsmax"]
+bMetroBusMin = est$coefficients["Métro / RER, Bus:tpsmin"]
+bMetroBusMax = est$coefficients["Métro / RER, Bus:tpsmax"]
+bMetroVoitMin = est$coefficients["Métro / RER, Bus, Voiture:tpsmin"]
+bMetroVoitMax = est$coefficients["Métro / RER, Bus, Voiture:tpsmax"]
+
+UPiedMetro = bPiedMetroMin*synth$TpsP7 + bPiedMetroMax*synth$MaxTps
+UPiedMetroBus = bPiedMetroBusMin*synth$TpsP7 + bPiedMetroBusMax*synth$MaxTps
+UMetro =  bMetroMin*synth$TpsP7 + bMetroMax*synth$MaxTps
+UMetroBus = bMetroBusMin*synth$TpsP7 + bMetroBusMax*synth$MaxTps
+UMetroVoit = bMetroVoitMin*synth$TpsP7 + bMetroVoitMax*synth$MaxTps
+etot = exp(UPiedMetro)+exp(UPiedMetroBus)+exp(UMetro)+exp(UMetroBus)+exp(UMetroVoit)
+
+PPiedMetro = exp(UPiedMetro)/etot
+PPiedMetroBus = exp(UPiedMetroBus)/etot
+PMetro = exp(UMetro)/etot
+PMetroBus = exp(UMetroBus)/etot
+PMetroVoit = exp(UMetroVoit)/etot
+probas = data.frame(PPiedMetro,PPiedMetroBus,PMetro,PMetroBus,PMetroVoit)
+cumprobas = t(apply(probas,1,cumsum))
+colnames(cumprobas)<-c("A pied (si plus de 10 minutes), Métro / RER","A pied (si plus de 10 minutes), Métro / RER, Bus","Métro / RER","Métro / RER, Bus","Métro / RER, Bus, Voiture")
+# draw mode by hand
+trmodes = c()
+for(i in 1:NEtus){
+  found=FALSE;r=runif(1)
+  for(j in 1:ncol(cumprobas)){if(r<cumprobas[i,j]&!found){trmodes=append(trmodes,colnames(cumprobas)[j]);found=TRUE}}
+}
+
+synth$ModalChoice = trmodes
+
+#apply(cumprobas,1,function(r){inds = which(r>runif(1));if(length(inds)==0){return(1)}else{}})
+#drawMode<-function()
+
+###
+## 6) Comments
+
+# just draw from contingency table
+
+comtable = table(data2016[,c("ModeTransp","PercepTransp")])
+t(apply(comtable,1,cumsum))
+
+# -> does not work, not normalized !
+
+
+###
+## 7) Fac choice
+
+timetable = table(cut(d$TpsP7,breaks = 5),d$FacChoice)
+distfactor = grep("L'Université est proche de chez moi",d$FacChoice)
+table(cut(d$TpsP7,breaks = 5),d$FacChoice%in%d$FacChoice[distfactor])
+# -> ultra rough distance effect : juste sample within with "fac proche de chez moi" si < 50 min
+
+facchoice=c()
+for(i in 1:NEtus){
+  if(synth$TpsP7[i]<50){facchoice=append(facchoice,sample(d$FacChoice%in%d$FacChoice[distfactor],size=1))}
+  else{facchoice=append(facchoice,sample(d$FacChoice,size=1))}
+}
+
+synth$FacChoice = facchoice
+
+
+###
+# 8) Cinema access
+
+# ...
+
+
+#### Export
+
+write.table(synth,file='synth.csv',sep=";",quote=FALSE)
 
 
 
