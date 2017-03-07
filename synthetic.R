@@ -80,15 +80,25 @@ comgraph = addAdministrativeLayer(trgraph,"data/gis/communes.shp",connect_speed 
 # add destination facs
 fullgraph = addPointsLayer(comgraph,'data/gis/facs.shp',connect_speed = 0.012)
 
+#save(fullgraph,file='data/fullgraph.RData')
+#load('data/fullgraph.RData')
+
 # compute times
 fromids = c();for(cp in synth$Domcode){if(length(which(V(fullgraph)$CP==cp))>0){show(cp)};fromids=append(fromids,which(V(fullgraph)$CP==cp))}
+#fromids = c();for(cp in d$Domcode){if(length(which(V(fullgraph)$CP==cp))>0){show(cp)};fromids=append(fromids,which(V(fullgraph)$CP==cp))}
 toids = c();for(fac in c("P1","P7","P4","P8","P10","P12","UPEM")){toids = append(toids,which(V(fullgraph)$pointname==fac))}
 factimes = distances(graph = fullgraph,v = fromids,to = toids,weights = E(fullgraph)$speed*E(fullgraph)$length)
 
 factimes = round(factimes)
 
 #min(d[,7:13])
-# -> a bit underestimated, add 10 minutes
+# -> a bit underestimated, add 10 minutes ?
+#factimes = factimes + 10
+#abserr=c();for(penalty in 0:30){abserr=append(abserr,sum(abs(d[c(1:17,21),7:13]-factimes[c(1:17,21),]-penalty)))}
+#plot(0:30,abserr,type='l')
+# -> 21 minutes on real times
+#factimes = factimes + 21
+# but gives shitty modal choices
 factimes = factimes + 10
 
 synth=cbind(synth,factimes)
@@ -128,7 +138,7 @@ synth$AvgTps = round(synth$AvgTps / 5)*5
 tabfamille = table(rbind(data2016[,c("DEPRES","Famille")],d[,c("DEPRES","Famille")]))
 # -> for Paris, clear proportion out of family, for petite couronne, small chance also
 #  just draw conditionnaly to the contingency table
-synth$Famille = sapply(synth$DEPRES,function(dep){ifelse(runif(1)<tabfamille[dep,1]/(tabfamille[dep,1]+tabfamille[dep,2]),"Non","Oui")})
+synth$Famille = sapply(synth$DEPRES,function(dep){if(!dep%in%rownames(tabfamille)){"Oui"}else{ifelse(runif(1)<tabfamille[dep,1]/(tabfamille[dep,1]+tabfamille[dep,2]),"Non","Oui")}})
 
 
 ###
@@ -229,15 +239,81 @@ for(i in 1:NEtus){
 synth$FacChoice = facchoice
 
 
+#### Export
+
+#write.table(synth,file='synth.csv',sep=";",quote=FALSE)
+
+
 ###
 # 8) Cinema access
 
-# ...
+# synth<-read.table(file='synth.csv',sep=';',quote="")
+
+# euclidian distances
+getDistances<-function(fromCP,toCP,mode){
+  fromids = c();for(cp in fromCP){if(length(which(V(fullgraph)$CP==cp))>0){fromids=append(fromids,which(V(fullgraph)$CP==cp))}}
+  toids = c();for(cp in toCP){if(length(which(V(fullgraph)$CP==cp))>0){toids = append(toids,which(V(fullgraph)$CP==cp))}}
+  fromids=unique(fromids);toids=unique(toids)
+  if(mode=="euclidian"){
+    dmat = matrix(rep(0,length(fromids)*length(toids)),nrow=length(fromids),ncol=length(toids))
+    for(i in 1:length(fromids)){
+      for(j in 1:length(toids)){
+        dmat[i,j]=sqrt((V(fullgraph)$x[fromids[i]]-V(fullgraph)$x[toids[j]])^2 + (V(fullgraph)$y[fromids[i]]-V(fullgraph)$y[toids[j]])^2)
+      }
+    }
+    rownames(dmat)=V(fullgraph)$CP[fromids];colnames(dmat)=V(fullgraph)$CP[toids]
+    return(dmat)
+  }
+  if(mode=="network"){
+    dmat = distances(graph = fullgraph,v = fromids,to = toids,weights = E(fullgraph)$speed*E(fullgraph)$length)
+    rownames(dmat)=V(fullgraph)$CP[fromids];colnames(dmat)=V(fullgraph)$CP[toids]
+    return(dmat)
+  }
+}
+
+eucldist = getDistances(d$Domcode,d$TheaterCode,mode="euclidian")
+nwdist = getDistances(d$Domcode,d$TheaterCode,mode="network")
+
+ed=c();nd=c()
+for(i in 1:length(d$Domcode)){
+  if(!is.na(d$TheaterCode[i])&as.character(d$TheaterCode[i])%in%colnames(eucldist)){
+    ed=append(ed,eucldist[as.character(d$Domcode[i]),as.character(d$TheaterCode[i])]);nd=append(nd,nwdist[as.character(d$Domcode[i]),as.character(d$TheaterCode[i])])}}
+
+plot(ed,nd)
+
+# -> sample codes in radius < 10km
+# travel time seems random
+communes <- readOGR('data/gis','communes')
+adj <- gTouches(communes,byid = TRUE)
+rownames(adj)<-communes$INSEE_COMM;colnames(adj)<-communes$INSEE_COMM
+
+theatercodes=c();theatertimes=c();theatermodes=c()
+for(i in 1:nrow(synth)){
+  if(runif(1)<0.25){
+    theatercodes=append(theatercodes,as.character(synth$Domcode[i]))
+    theatertimes=append(theatertimes,runif(1,min = 5,max=10))
+    theatermodes=append(theatermodes,sample(c("A pied (si seul mode ou si plus de 10 minutes combiné à un autre mode)","Voiture"),size=1))
+  }
+  else{
+    theatercodes=append(theatercodes,sample(colnames(adj)[which(adj[as.character(synth$Domcode[i]),])],size=1))
+    theatertimes=append(theatertimes,runif(1,min = 10,max=40))
+    theatermodes=append(theatermodes,sample(d$TheaterMode,size=1))
+  }
+}
+
+theatertimes=round(theatertimes / 5)*5
+
+theaterfreq = sample(d$TheaterFreq,replace = TRUE,size=nrow(synth))
+
+synth$TheaterCode = theatercodes
+synth$TheaterFreq = theaterfreq
+synth$TheaterTime = theatertimes
+synth$TheaterMode = theatermodes
 
 
-#### Export
+######
 
-write.table(synth,file='synth.csv',sep=";",quote=FALSE)
+write.table(synth,file='synth_Cinema.csv',sep=";",quote=FALSE)
 
 
 
